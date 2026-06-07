@@ -1,0 +1,12 @@
+# FileStructureRequirements.md
+The file structure given here is the example structure, although if you are using the precomputed Visual Odometry path, the system will work with these example files. You must however ensure that the filepaths match. More specifically, the **FILEPATH** given during the initial setup in **FigureCreation.m** (line 83) must be set to the directory of the folder containing the images and sensor data. In the case of downloading this repo, you would set your filepath to **.../ExampleFileStructure/**. Make sure to use the slash **/** at the end, or it will not be able to open the files!
+
+You will also have to edit the filepaths for the Mathworks helper functions for the visual odometry. These will be in the MATLAB example directory on your MATLAB installation. Please use/replace the addpath commands at the top of the **VisualOdometry.m** file.
+
+It is important that your file structure is made correctly. There are four required components:
+- **Images:** Unless you are using the example Visual Odometry path, you must include all the images taken by the optical camera. These must be of the format **XXXXXX.png**, where XXXXXX represents a 6-digit frame number. This allows the system to determine the frametime. In CARLA, the frame number is related to the discrete time step of the CARLA instance.
+- **ground_truth.txt:** This is the ground truth of the system, which is given in the format **X, nn.nnn, Y, nn.nnn, Z, nn.nnn**. Note that **nn.nnn** is not representative of a specific number of digits or decimal places.
+- **noisy_gnss.txt:** This is the same format as the ground truth, meant for being used to store the lower frequency gnss data. The noise can be modelled in CARLA, or later in MATLAB (currently done in MATLAB).
+- **vehicle_sensors.txt:** This stores the steering angle, speed and orientation of the car. It is in the format: **SteeringAngle, nn.nnn, Speed, nn.nnn, Rotation, nn.nnn** per line. Again, note that **nn.nnn** is not representative of a specific number of digits or decimal places.
+
+These files are not set to a specific frequency, so you can have the ground truth, GNSS, and other sensors recording at a different frequency. The frequencies are given by the timespans **tspan_XXXX** during the initial setup of **FigureCreation.m**. You can also use the **Route** variable to select between different directories, with different frequencies, paths or lengths. You **will** get errors if the freqeuncy of the sensors and the timespan (**tspan_sensors** for example) do not match! 
