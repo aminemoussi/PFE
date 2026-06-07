@@ -20,7 +20,7 @@ def main():
     random.seed(0)
 
     client = carla.Client("localhost", 2000)
-    client.set_timeout(10.0)
+    client.set_timeout(60.0)
 
     world = client.load_world("Town03")
     client.reload_world()
