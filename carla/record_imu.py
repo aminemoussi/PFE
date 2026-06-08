@@ -30,7 +30,7 @@ def main():
     settings.no_rendering_mode = True
     world.apply_settings(settings)
 
-    traffic_manager = client.get_trafficmanager(8000)
+    traffic_manager = client.get_trafficmanager(8001)
     traffic_manager.set_random_device_seed(1)
     traffic_manager.set_synchronous_mode(True)
 
@@ -51,7 +51,7 @@ def main():
 
     actor_list.append(ego_vehicle)
     print("created ego vehicle %s" % ego_vehicle.type_id)
-    ego_vehicle.set_autopilot(True)
+    ego_vehicle.set_autopilot(True, traffic_manager.get_port())
     traffic_manager.vehicle_percentage_speed_difference(ego_vehicle, 50)
 
     if CAMERA_ON:
