@@ -6,12 +6,8 @@ from queue import Empty
 import math
 import os
 
-CAMERA_ON = False  # CHANGED: skip image dump (you have Will's camera/VO)
-OUTPUT_DIR = "/home/fablab/Documents/PFE_Moussi/output/30HzSlow2"  # CHANGED: Linux path (Will's was F:/...)
-
-
-def queue_sensor_data(data, queue):
-    queue.put(data)
+CAMERA_ON = False  # skip image dump (you have Will's camera/VO)
+OUTPUT_DIR = "/home/fablab/Documents/PFE_Moussi/output/30HzSlow2"
 
 
 def main():
@@ -54,6 +50,9 @@ def main():
     ego_vehicle.set_autopilot(True, traffic_manager.get_port())
     traffic_manager.vehicle_percentage_speed_difference(ego_vehicle, 50)
 
+    # ONE shared queue. Every sensor callback ONLY drops raw numbers in -> instant, never blocks.
+    sensor_q = Queue()
+
     if CAMERA_ON:
         camera_init_trans = carla.Transform(carla.Location(x=1.5, z=2.4))
         camera_bp = world.get_blueprint_library().find("sensor.camera.rgb")
@@ -65,8 +64,7 @@ def main():
         camera = world.spawn_actor(camera_bp, camera_init_trans, attach_to=ego_vehicle)
         actor_list.append(camera)
         print("created sensor %s" % camera.type_id)
-        image_queue = Queue()
-        camera.listen(lambda image: queue_sensor_data(image, image_queue))
+        camera.listen(lambda image: sensor_q.put(("cam", image)))
 
     # Perfect (noise-free) GNSS = ground-truth position
     GNSS_init_transform = carla.Transform(carla.Location(x=1.5, z=2.4))
@@ -77,99 +75,116 @@ def main():
     )
     actor_list.append(position_sensor)
     print("created sensor %s" % position_sensor.type_id)
-
-    f1 = open(OUTPUT_DIR + "/ground_truth.txt", "w")
     position_sensor.listen(
-        lambda g: f1.write(
-            "X, "
-            + str(g.transform.location.x)
-            + ", Y, "
-            + str(g.transform.location.y)
-            + ", Z, "
-            + str(g.transform.location.z)
-            + "\n"
+        lambda g: sensor_q.put(
+            (
+                "gt",
+                (
+                    g.transform.location.x,
+                    g.transform.location.y,
+                    g.transform.location.z,
+                ),
+            )
         )
     )
-
-    f2 = open(OUTPUT_DIR + "/vehicle_sensors.txt", "w")
 
     GNSS_bp.set_attribute("sensor_tick", "0.0333")
     noisy_gnss = world.spawn_actor(GNSS_bp, GNSS_init_transform, attach_to=ego_vehicle)
     actor_list.append(noisy_gnss)
     print("created sensor %s" % noisy_gnss.type_id)
-
-    f3 = open(OUTPUT_DIR + "/noisy_gnss.txt", "w")
     noisy_gnss.listen(
-        lambda g: f3.write(
-            "X, "
-            + str(g.transform.location.x)
-            + ", Y, "
-            + str(g.transform.location.y)
-            + ", Z, "
-            + str(g.transform.location.z)
-            + "\n"
+        lambda g: sensor_q.put(
+            (
+                "noisy",
+                (
+                    g.transform.location.x,
+                    g.transform.location.y,
+                    g.transform.location.z,
+                ),
+            )
         )
     )
 
-    # ===== NEW: IMU sensor (noise OFF), logging the clean body-frame accel + yaw rate =====
+    # IMU (noise OFF): callback ONLY enqueues clean numbers -- no file write, no RPC (that was the slow part)
     imu_bp = world.get_blueprint_library().find("sensor.other.imu")
     imu_bp.set_attribute("sensor_tick", "0.1")  # 10 Hz, to match the PINN
     imu_sensor = world.spawn_actor(imu_bp, carla.Transform(), attach_to=ego_vehicle)
     actor_list.append(imu_sensor)
     print("created sensor %s" % imu_sensor.type_id)
+    imu_sensor.listen(
+        lambda m: sensor_q.put(
+            ("imu", (m.timestamp, m.accelerometer.x, m.accelerometer.y, m.gyroscope.z))
+        )
+    )
 
+    f1 = open(OUTPUT_DIR + "/ground_truth.txt", "w")
+    f2 = open(OUTPUT_DIR + "/vehicle_sensors.txt", "w")
+    f3 = open(OUTPUT_DIR + "/noisy_gnss.txt", "w")
     f4 = open(OUTPUT_DIR + "/imu.txt", "w")
 
-    def log_imu(m):
-        gt_w = ego_vehicle.get_angular_velocity()  # deg/s, sanity cross-check only
-        f4.write(
-            "t, "
-            + str(m.timestamp)
-            + ", ax, "
-            + str(m.accelerometer.x)
-            + ", ay, "
-            + str(m.accelerometer.y)
-            + ", wz, "
-            + str(m.gyroscope.z)  # rad/s, clean
-            + ", gt_wz_deg, "
-            + str(gt_w.z)
-            + "\n"
-        )
-
-    imu_sensor.listen(log_imu)
-    # ======================================================================================
-
-    for x in range(4242):
-        world.tick()
-        velocity = ego_vehicle.get_velocity()
-        speed = math.sqrt(velocity.x**2 + velocity.y**2 + velocity.z**2)
-        vehicle_transform = ego_vehicle.get_transform()
-        f2.write(
-            "SteeringAngle, "
-            + str(
-                ego_vehicle.get_wheel_steer_angle(
-                    carla.VehicleWheelLocation.Front_Wheel
-                )
-            )
-            + ", Speed, "
-            + str(speed)
-            + ", Rotation, "
-            + str(vehicle_transform.rotation.yaw)
-            + "\n"
-        )
-
-        if CAMERA_ON and not (x % 4):
+    def drain():
+        # write everything sitting in the queue, then return. Keeps memory flat.
+        while True:
             try:
-                image_data = image_queue.get(True, 0.1)
-                image_data.save_to_disk(OUTPUT_DIR + "/%06d.png" % image_data.frame)
+                tag, data = sensor_q.get_nowait()
             except Empty:
-                print("[Warning] Some sensor data has been missed")
-            continue
+                return
+            if tag == "gt":
+                f1.write("X, %s, Y, %s, Z, %s\n" % data)
+            elif tag == "noisy":
+                f3.write("X, %s, Y, %s, Z, %s\n" % data)
+            elif tag == "imu":
+                f4.write("t, %s, ax, %s, ay, %s, wz, %s\n" % data)
+            elif tag == "cam":
+                data.save_to_disk(OUTPUT_DIR + "/%06d.png" % data.frame)
 
-    f1.close()
-    f2.close()
-    f3.close()
-    f4.close()  # NEW
+    try:
+        for x in range(4242):
+            world.tick()
+
+            # telemetry -- RPCs are fine HERE (main thread), unlike inside a sensor callback
+            velocity = ego_vehicle.get_velocity()
+            speed = math.sqrt(velocity.x**2 + velocity.y**2 + velocity.z**2)
+            vehicle_transform = ego_vehicle.get_transform()
+            f2.write(
+                "SteeringAngle, "
+                + str(
+                    ego_vehicle.get_wheel_steer_angle(
+                        carla.VehicleWheelLocation.Front_Wheel
+                    )
+                )
+                + ", Speed, "
+                + str(speed)
+                + ", Rotation, "
+                + str(vehicle_transform.rotation.yaw)
+                + "\n"
+            )
+
+            drain()  # consume this step's sensor data -> bounded memory
+            time.sleep(0.001)  # yield so the sensor thread can deliver; cheap insurance
+    finally:
+        try:
+            time.sleep(0.1)
+            drain()  # flush any last stragglers
+        except Exception:
+            pass
+        for f in (f1, f2, f3, f4):
+            try:
+                f.close()
+            except Exception:
+                pass
+        for s in actor_list:
+            try:
+                s.destroy()
+            except Exception:
+                pass
+        try:
+            s2 = world.get_settings()
+            s2.synchronous_mode = False
+            s2.fixed_delta_seconds = None
+            world.apply_settings(s2)
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":
