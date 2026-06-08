@@ -163,9 +163,16 @@ def main():
             drain()  # consume this step's sensor data -> bounded memory
             time.sleep(0.001)  # yield so the sensor thread can deliver; cheap insurance
     finally:
+        # 1) stop sensors FIRST so no callback fires mid-teardown (that race is what aborted)
+        for s in actor_list:
+            try:
+                s.stop()  # only sensors have stop(); the vehicle just raises, ignored
+            except Exception:
+                pass
+        # 2) flush anything still queued, then close the files
         try:
             time.sleep(0.1)
-            drain()  # flush any last stragglers
+            drain()
         except Exception:
             pass
         for f in (f1, f2, f3, f4):
@@ -173,11 +180,13 @@ def main():
                 f.close()
             except Exception:
                 pass
-        for s in actor_list:
+        # 3) destroy sensors BEFORE the vehicle they're attached to (reverse of creation order)
+        for s in reversed(actor_list):
             try:
                 s.destroy()
             except Exception:
                 pass
+        # 4) hand the server back in async mode so the next run connects cleanly
         try:
             s2 = world.get_settings()
             s2.synchronous_mode = False
