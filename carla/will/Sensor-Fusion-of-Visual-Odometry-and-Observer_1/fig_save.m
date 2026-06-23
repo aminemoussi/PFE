@@ -1,0 +1,10 @@
+gt = interp1(tspan_ground_truth, ground_truth, tspan_kalman_filter);
+o  = gnss_fail_start:gnss_fail_end;
+pk = max(hypot(pose_storage(1,o)'-gt(o,1), pose_storage(2,o)'-gt(o,2)));
+f = figure('Visible','off');
+plot(gt(o,1), gt(o,2), 'b', 'LineWidth', 1.5); hold on;
+plot(pose_storage(1,o), pose_storage(2,o), 'r--', 'LineWidth', 1.5);
+axis equal; grid on; legend('truth','estimate','Location','best');
+xlabel('x [m]'); ylabel('y [m]'); title(sprintf('peak = %.2f m', pk));
+exportgraphics(f, 'result.png', 'Resolution', 150);
+disp(['saved result.png  |  peak = ' num2str(pk) ' m']);
